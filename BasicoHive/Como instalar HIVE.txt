@@ -1,0 +1,80 @@
+﻿Como instalar HIVE.
+
+https://hive.apache.org/downloads.html
+
+http://www.apache.org/dyn/closer.cgi/hive/
+
+http://apache.rediris.es/hive/
+
+http://apache.rediris.es/hive/hive-0.14.0/ -> http://apache.rediris.es/hive/hive-0.14.0/apache-hive-0.14.0-bin.tar.gz
+
+tar xfv apache-hive-0.14.0-bin
+
+cd /apache-hive-0.14.0-bin/
+cd lib
+ls *jdbc*
+cd ..
+cd conf
+ls
+
+Para cambiar la configuracion de cómo ha de ejecutarse (local, pseudodistribuido, distribuido)
+
+vi hive-default.xml.template
+
+Para buscar, 'esc + /'
+
+hive.metastore.uri
+javax.jdo.option.ConnectionURL
+javax.jdo.option.ConnectionUserName
+javax.jdo.option.ConnectionPassword
+
+Buscamos el directorio donde hemos descomprimido el tar
+[cloudera@quickstart ~]$ ls
+apache-hive-0.14.0-bin  Documents              Music     wallpaper
+cloudera-manager        Downloads              pet.java  
+codigo_map_evento       eclipse                Pictures  
+datasets                event.java             Public    
+desarrollo              Firefox_wallpaper.png  Templates
+Desktop                 lib                    Videos
+[cloudera@quickstart ~]$ cd apache-hive-0.14.0-bin/
+[cloudera@quickstart apache-hive-0.14.0-bin]$ bin/hive 
+
+Logging initialized using configuration in jar:file:/home/cloudera/apache-hive-0.14.0-bin/lib/hive-common-0.14.0.jar!/hive-log4j.properties
+SLF4J: Class path contains multiple SLF4J bindings.
+SLF4J: Found binding in [jar:file:/usr/lib/zookeeper/lib/slf4j-log4j12-1.7.5.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: Found binding in [jar:file:/home/cloudera/apache-hive-0.14.0-bin/lib/hive-jdbc-0.14.0-standalone.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
+SLF4J: Actual binding is of type [org.slf4j.impl.Log4jLoggerFactory]
+
+hive> show tables;
+OK
+Time taken: 0.292 seconds
+
+hive> [cloudera@quickstart apache-hive-0.14.0-bin]$ ls -lrt
+total 420
+-rw-r--r-- 1 cloudera cloudera  23828 Nov  9 01:45 LICENSE
+-rw-r--r-- 1 cloudera cloudera   4048 Nov  9 01:45 README.txt
+-rw-r--r-- 1 cloudera cloudera 340611 Nov  9 03:35 RELEASE_NOTES.txt
+-rw-r--r-- 1 cloudera cloudera    277 Nov  9 03:37 NOTICE
+drwxrwxr-x 4 cloudera cloudera   4096 Dec 19 19:36 examples
+drwxrwxr-x 3 cloudera cloudera   4096 Dec 19 19:36 scripts
+drwxrwxr-x 3 cloudera cloudera   4096 Dec 19 19:36 bin
+drwxrwxr-x 4 cloudera cloudera   4096 Dec 19 19:36 lib
+drwxrwxr-x 7 cloudera cloudera   4096 Dec 19 19:36 hcatalog
+drwxrwxr-x 2 cloudera cloudera   4096 Dec 19 19:45 conf
+-rw-rw-r-- 1 cloudera cloudera  21009 Dec 19 19:49 derby.log
+drwxrwxr-x 5 cloudera cloudera   4096 Dec 19 19:49 metastore_db
+[cloudera@quickstart apache-hive-0.14.0-bin]$ 
+
+¡OJO!, para no liarla, y no joder la BD con la que trabaje, arrancar desde bin/hive, vamos, desde donde está instalado.
+
+#Para mostrar el esquema en el que estamos trabajando
+hive> set hive.cli.print.current.db=true; 
+#Para mostrar las cabeceras de las columnas
+hive (default)> set hive.cli.print.header=true;    
+hive (default)> 
+
+#Para que estos parametros queden de forma permanente:
+vi .hiverc en la raiz de mi usuario
+Añadir las dos líneas anteriores
+Para salvar, esc + :wq

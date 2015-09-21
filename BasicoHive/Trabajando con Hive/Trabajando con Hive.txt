@@ -1,0 +1,289 @@
+﻿-------------------------------------------------------------------------------------------------------
+  INTRODUCCIÓN
+-------------------------------------------------------------------------------------------------------
+Consultas y comandos hive necesarios para obtener los resultados que se solicitan en cada caso. 
+La syntaxis y comandos admitidos serán aquellos que están disponibles en Hive versión 0.14.
+
+Deberán consignarse todos los comandos necesarios para cada paso. Aunque se debe presuponer
+que cualquier función, tabla o vista definida con antelación ya existe.
+
+En particular se supondrá que las siguientes macros están definidas en la sesión actual del usuario.
+
+CREATE TEMPORARY MACRO os(agent string)      regexp_extract(agent, '(Windows|Mac|Android)', 1);
+CREATE TEMPORARY MACRO host(url string)      parse_url(url, 'HOST');
+CREATE TEMPORARY MACRO ts_minute(ts string)  from_unixtime(cast(ts as int), 'yyyy-MM-dd HH:mm:ss');
+
+(NOTA: Para hacer pruebas deberán ejecutarse los comandos anteriores en la sesión de pruebas o 
+definirse en el fichero .hiverc del usuario que ejecuta las consultas.)
+
+Se adjuntan en el directorio dataset del proyecto, datos de clicks provenientes de 1usagov. El objeto de estas consultas, 
+será realizar vairas definiciones de objetos de base de datos para tratarlos y obtener estadísticas simples sobre ellos.
+
+Los ficheros se deben encontrar almacenados en local en la ruta '/home/cloudera/usagov'.
+
+La correspondencia entre los campos de los JSON almacenados en estos ficheros y su significado es:
+
+a  --> agente/navegador usado.
+c  --> país de origen de la petición.
+nk --> Indicador de usuario conocido (0 = No, 1 = Si).
+g  --> Hash global en bitly.
+h  --> Hash del usuario en bitly. 
+l  --> Usuario en bitly que realiza la petición.
+hh --> Url acortada.
+r  --> Url desde la que se llegó a la URL consultada.
+u  --> Url consultada.
+t  --> timestamp de la consulta.
+gr --> Código de la región geográfica desde la que se hizo la consulta.
+ll --> posición geográfica en formato '[latitud, longitud]'
+cy --> Nombre de la ciudad desde la que se hizo la consulta.
+tz --> Zona horaria desde la que se hizo la consulta. 
+hc --> Timestamp en que se generó el hash.
+al --> Lenguaje aceptado por el usuario.
+
+Para más información consultar: http://www.usa.gov/About/developer-resources/1usagov.shtml
+
+--Comenzamos el proceso limpio.
+use default;
+
+--Borramos las vistas.
+drop view usagov.clicks_tmp;
+drop view usagov.clicks_data;
+drop view usagov.clicks_cu;
+drop view usagov.clicks_cso;
+drop view usagov.clicks_ct;
+drop view usagov.clicks_avg_country;
+
+--Borramos las tablas.
+drop table usagov.clicks;
+drop table usagov.clicks_serde;
+drop table usagov.clicks_per_min;
+
+--Borramos la base de datos.
+drop database usagov;
+
+-------------------------------------------------------------------------------------------------------
+-- Definir una base de datos llamada 'usagov' y seleccionarla 
+-- base de datos por defecto.
+-------------------------------------------------------------------------------------------------------
+
+--Creamos la base de datos.
+CREATE DATABASE usagov;
+
+--Usamos la base de datos que acabamos de crear para todo el proceso.
+USE usagov;
+
+-------------------------------------------------------------------------------------------------------
+-- Crear una tabla manejada 'clicks' para almacenar los clicks en bruto (sin tratar). 
+-- La tabla solo contendrá un campo 'data' del tipo adecuado. 
+-- Cargar en ella los ficheros de datos proporcionados.
+-------------------------------------------------------------------------------------------------------
+
+--Creamos la tabla clicks (externa a hdfs) con los datos del directorio clicks de HDFS.
+CREATE EXTERNAL TABLE clicks (data String) LOCATION '/user/cloudera/clicks';
+
+--Comprobamos que los datos se han cargado
+SELECT * FROM clicks limit 5;
+
+-------------------------------------------------------------------------------------------------------
+-- Crear una vista sobre la tabla 'clicks' llamada 'clicks_data' utilizando una LATERAL VIEW para
+-- extraer todos los campos definidos en el JSON.
+-------------------------------------------------------------------------------------------------------
+
+--Limpiamos los datos de saltos de línea.
+CREATE VIEW clicks_tmp AS SELECT regexp_replace(data, '\\\\n', ' ') data FROM clicks;
+
+--Creamos la nueva vista clicks_data mediante una LATERAL VIEW.
+CREATE VIEW clicks_data AS 
+SELECT 
+agent,country,knownUser,hashglobal,hashbilty,biltyuser,shorthurl,
+inurl,url,timestamp,region,latlong,city,timezone,hashtimestamp,language 
+FROM clicks_tmp 
+LATERAL VIEW 
+JSON_TUPLE(data, 'a','c','nk','g','h','l','hh','r','u','t','gr','ll','cy','tz','hc','al') 
+BASIC AS 
+agent,country,knownUser,hashglobal,hashbilty,biltyuser,shorthurl,
+inurl,url,timestamp,region,latlong,city,timezone,hashtimestamp,language;
+
+--Comprobamos que los datos se han cargado
+SELECT * FROM clicks_data limit 5;
+
+-------------------------------------------------------------------------------------------------------
+-- Crear una tabla 'clicks_serde' que hace lo mismo utilizando el SerDe JSON proporcionado en el 
+-- directorio jsonSerDe. 
+-------------------------------------------------------------------------------------------------------
+
+--Añadimos nuestro jar del JsonSerDe, compilado o descargado
+ADD jar /home/cloudera/desarrollo/json-serde-1.3.1.jar
+;
+
+--Creamos la tabla clicks_serde usando el jar anterior, definiendo el campo ll (latitud y longitud) como un array de string.
+CREATE TABLE clicks_serde
+(a string, c string, nk string, g string, h string, l string, hh string, r string, u string, 
+t string, gr string, ll array<string>, cy string, tz string, hc string, al string) 
+ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe'
+LOCATION '/user/cloudera/clicks';
+
+--Comprobamos que los datos se han cargado
+SELECT * FROM clicks_serde limit 5;
+
+-------------------------------------------------------------------------------------------------------
+-- Mediante consulta a una de las dos tablas anteriores obtener un listado del número total de clicks 
+-- por pais y host (usando la macro proporcionada). 
+-- No deben aparecer valores NULL ni en el pais ni en el host.
+-------------------------------------------------------------------------------------------------------
+
+--Si lanzamos la consulta directamente sobre la tabla, el parseo del host, entiendo que al contener más cosas de las que se muestran en pantalla, repite valores.
+SELECT 
+country, 
+host(url) as url, 
+count(1) as cont 
+FROM 
+clicks_data 
+WHERE 
+country IS NOT NULL AND url IS NOT NULL
+GROUP BY country, url
+;
+
+--Pero si creamos una vista sobre la tabla, y realizamos la consulta sobre la misma, la agrupación que obtenemos mucho más acertada.
+--Creamos una vista auxiliar con los datos para la consulta de este ejercicio, donde filtramos 
+--los valores nulos.
+CREATE VIEW clicks_cu 
+AS SELECT 
+country, 
+host(url) as url, 
+1 as cont 
+FROM 
+clicks_data 
+WHERE 
+country IS NOT NULL AND 
+url IS NOT NULL
+;
+
+--Realizamos la consulta sobre la vista.
+SELECT 
+country, 
+url, 
+count(cont) click 
+FROM 
+clicks_cu 
+GROUP BY country, url
+;
+
+-------------------------------------------------------------------------------------------------------
+-- De igual forma obtener el número de clicks por pais y sistema operativo (usando la macro os 
+-- proporcionada). 
+-- Los valores devueltos deben ser 'Windows', 'Mac', Android' u 'Otro'. Tener cuidado nuevamente con los valores NULL.
+-------------------------------------------------------------------------------------------------------
+
+--Al igual que en el punto anterior, al realizar la consulta directamente sobre la tabla, la
+--agrupación no es del todo correcta.
+SELECT 
+country, 
+CASE WHEN os(agent) == '' THEN 'Otro' ELSE os(agent) END as agent,
+count(1) as cont 
+FROM 
+clicks_data 
+WHERE 
+country IS NOT NULL AND 
+agent IS NOT NULL
+GROUP BY 
+country, agent
+;
+
+--Creando una vista sobre la tabla, eliminando valores nulos, la agrupación es la correcta.
+CREATE VIEW clicks_cso 
+AS SELECT 
+country, 
+CASE WHEN os(agent) == '' THEN 'Otro' else os(agent) end as agent,
+1 as cont 
+FROM 
+clicks_data 
+WHERE 
+country IS NOT NULL AND agent IS NOT NULL
+;
+
+SELECT 
+country, 
+agent, 
+count(cont) click 
+FROM 
+clicks_cso 
+GROUP BY 
+country, agent
+;
+
+-------------------------------------------------------------------------------------------------------
+-- Crear una tabla 'clicks_per_min' que contenga el número de clicks por minuto y país. 
+-- Usar la función 'ts_minute' proporcionada para convertir los timestamp en minutos concretos.
+-------------------------------------------------------------------------------------------------------
+
+--Creamos la tabla eliminando posibles valores nulos, haciendo uso de una vista intermedia.
+CREATE view clicks_ct 
+AS SELECT 
+country,
+minute(ts_minute(timestamp)) as timestamp, 
+1 as cont 
+FROM 
+clicks_data 
+WHERE 
+country IS NOT NULL
+;
+
+--Creamos la tabla mediante los datos de la vista.
+CREATE table clicks_per_min 
+AS SELECT 
+country, 
+timestamp, 
+count(cont) as cont 
+FROM 
+clicks_ct 
+GROUP BY 
+country, timestamp
+;
+
+-------------------------------------------------------------------------------------------------------
+-- Obtener el número medio de clicks por país.
+-------------------------------------------------------------------------------------------------------
+
+--Haciendo uso de la vista auxiliar (clicks_cso) que hemos creado anteriormente, creamos una nueva vista 
+--en la que vamos a añadir unicamente los campos de país y un conteo de clicks por país.
+CREATE VIEW 
+clicks_avg_country 
+AS SELECT 
+country, 
+count(cont) as cont 
+FROM 
+clicks_cso 
+GROUP BY 
+country
+;
+
+--Realizamos la consulta (la media de clicks en general, en el mundo, previa agrupación por paises).
+SELECT 
+avg(cont) as media_clicks 
+FROM 
+clicks_avg_country
+;
+
+-------------------------------------------------------------------------------------------------------
+-- Mediante una consulta obtener todos los clicks cuya posición está dentro del rectángulo defindo
+-- por los vertices [39.0, -2.0] y [43.0, 2.0].
+-------------------------------------------------------------------------------------------------------
+
+--Realizamos la consulta filtrando y limpiando los datos para que sean más facilmente entendibles.
+--select c as country,os(a) as agent,host(u) as url,ll from clicks_serde where ll is not null and ((ll[0] >= 39 and ll[0] <= 43) and (ll[1] >= -2 and ll[1] <= 2)) order by ll;
+
+SELECT 
+c as country, 
+os(a) as agent, 
+host(u) as url, 
+ll 
+FROM 
+clicks_serde 
+WHERE 
+ll IS NOT NULL AND 
+((cast(ll[0] as double) >= 39.0 AND cast(ll[0] as double) <= 43.0) AND 
+(cast(ll[1] as double) >= -2.0 AND cast(ll[1] as double) <= 2.0)) 
+;
+
+--Los datos resultantes del rectangulo definido, pertenecen a España.
